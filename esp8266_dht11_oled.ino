@@ -9,20 +9,6 @@
 
 #include "wifi_creds.h"
 
-#define DHTPIN            D5         // Pin which is connected to the DHT sensor.
-#define DHTTYPE           DHT11      // DHT 11 
-
-DHT_Unified dht(DHTPIN, DHTTYPE);
-U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 32
-
-static char sensor_buffer[] = "TT,YY";
-String postData = String("temperature=");
-
-HTTPClient http;
-String localIP;
-
 #define FINAL 0
 
 #if FINAL
@@ -33,30 +19,86 @@ String localIP;
 #define DEBUG_PRINT(...)	Serial.print(__VA_ARGS__)
 #endif
 
-unsigned long lastWiFIBegin = 0;
-static const unsigned long INTERVAL_BETWEEN_CONNECT_MS = 5000;
+static unsigned int const DHTPIN = D5;      // Pin which is connected to the DHT sensor.
+static unsigned int const DHTTYPE = DHT11;      // DHT 11 
 
-void checkWiFi()
+DHT_Unified dht(DHTPIN, DHTTYPE);
+U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 32
+
+String postData = String("temperature=");
+
+HTTPClient http;
+
+static const uint8_t WIFI_FRAMES[5][8] = {
+	0x0,0x0,0x0,0x0,0x0,0x0,0x1,0x1,
+	0x0,0x0,0x0,0x0,0x4,0x4,0x5,0x5,
+	0x0,0x0,0x10,0x10,0x14,0x14,0x15,0x15,
+	0x40,0x40,0x50,0x50,0x54,0x54,0x55,0x55,
+	0x40,0x40,0x40,0x51,0x4a,0x44,0x4a,0x51,
+};
+
+class WiFiConnection
 {
-	if (WiFi.status() != WL_CONNECTED)
+public:
+
+	WiFiConnection() : lastWiFiBegin(0) {}
+
+	void checkWiFi()
 	{
-		DEBUG_PRINTLN("Connecting...");
-		if (lastWiFIBegin == 0 || (millis() - lastWiFIBegin > INTERVAL_BETWEEN_CONNECT_MS))
+		if (WiFi.status() != WL_CONNECTED)
 		{
-			WiFi.begin(WIFI_NAME, WIFI_PASS);
-			lastWiFIBegin = millis();
+			DEBUG_PRINTLN("Connecting...");
+			if (lastWiFiBegin == 0 || (millis() - lastWiFiBegin > INTERVAL_BETWEEN_CONNECT_MS))
+			{
+				WiFi.begin(WIFI_NAME, WIFI_PASS);
+				lastWiFiBegin = millis();
+			}
+			localIP = "No connection.";
+			Serial.println(WiFi.status());
 		}
-		localIP = "No connection.";
-		Serial.println(WiFi.status());
+		else
+		{
+			localIP = WiFi.localIP().toString();
+			long rssi = WiFi.RSSI();
+			Serial.print("RSSI:");
+			Serial.println(rssi);
+		}
 	}
-	else
+
+	const bool isConnected()
 	{
-		localIP = WiFi.localIP().toString();
-		long rssi = WiFi.RSSI();
-		Serial.print("RSSI:");
-		Serial.println(rssi);
+		return WiFi.status() == WL_CONNECTED;
 	}
-}
+
+	const String& getPublicIP()
+	{
+		return localIP;
+	}
+
+	const unsigned int getSignalStrength()
+	{
+		if (isConnected())
+		{
+			if (WiFi.RSSI() > -100)
+				return (100 + WiFi.RSSI()) * 5 / 100;
+			else
+				return 0;
+		}
+		else
+		{
+			return 0;
+		}
+	}
+
+private:
+	unsigned long lastWiFiBegin;
+	String localIP;
+	static unsigned long const INTERVAL_BETWEEN_CONNECT_MS = 5000;
+};
+
+WiFiConnection wifiConnection;
 
 void setup()
 {
@@ -70,14 +112,7 @@ void setup()
 
 	dht.begin();
 	u8g2.begin();
-	checkWiFi();
-	/*
-	while (WiFi.status() != WL_CONNECTED)
-	{
-		Serial.print(".");
-		delay(500);
-	}
-	*/
+	wifiConnection.checkWiFi();
 }
 
 void button_pressed() {
@@ -85,45 +120,47 @@ void button_pressed() {
 }
 
 void loop() {
-	checkWiFi();
-	/*
-	int button = digitalRead(D3);
-	Serial.print("Button: ");
-	Serial.println(button);
-	// Get temperature event and print its value.
+	wifiConnection.checkWiFi();
+	
+	String displayData;
 	sensors_event_t event;
 	dht.temperature().getEvent(&event);
 	if (isnan(event.temperature)) {
-		Serial.println("Error reading temperature!");
+		DEBUG_PRINTLN("Error reading temperature!");
+		displayData += "NaN";
 	}
 	else {
-		Serial.print("Temperature: ");
-		Serial.print(event.temperature);
-		Serial.println(" *C");
-		sensor_buffer[0] = '0' + (int)event.temperature / 10;
-		sensor_buffer[1] = '0' + (int)event.temperature % 10;
+		DEBUG_PRINT("Temperature: ");
+		DEBUG_PRINT(event.temperature);
+		DEBUG_PRINTLN(" *C");
+		displayData += (int)event.temperature;
+		displayData += "°C";
 	}
+	displayData += " ";
 	// Get humidity event and print its value.
 	dht.humidity().getEvent(&event);
 	if (isnan(event.relative_humidity)) {
-		Serial.println("Error reading humidity!");
+		DEBUG_PRINTLN("Error reading humidity!");
+		displayData += "NaN";
 	}
 	else {
-		Serial.print("Humidity: ");
-		Serial.print(event.relative_humidity);
-		Serial.println("%");
-		sensor_buffer[3] = '0' + (int)event.relative_humidity / 10;
-		sensor_buffer[4] = '0' + (int)event.relative_humidity % 10;
+		DEBUG_PRINT("Humidity: ");
+		DEBUG_PRINT(event.relative_humidity);
+		DEBUG_PRINTLN("%");
+		displayData += (int)event.relative_humidity;
+		displayData += "%";
 	}
-	*/
+	
 	u8g2.clearBuffer();
-	u8g2.setFont(u8g2_font_5x7_tr);
-	unsigned int size = u8g2.getStrWidth(localIP.c_str());
-	u8g2.drawStr(SCREEN_WIDTH - size, SCREEN_HEIGHT - 1, localIP.c_str());
+	u8g2.setFont(u8g2_font_5x7_tf);
+	unsigned int size = u8g2.getStrWidth(wifiConnection.getPublicIP().c_str());
+	u8g2.drawStr(0, SCREEN_HEIGHT, wifiConnection.getPublicIP().c_str());
+	u8g2.setFont(u8g2_font_9x15B_tf);
+	u8g2.drawUTF8(0, SCREEN_HEIGHT/2, displayData.c_str());
+	static int frame = 0;
+	u8g2.drawXBM(SCREEN_WIDTH - 8, SCREEN_HEIGHT - 8, 8, 8, WIFI_FRAMES[frame]);
+	frame = (frame + 1) % 5;
 	u8g2.sendBuffer();
-
-	//u8g2.drawBitmap(0,10, 2, 16, )
-	   //u8g2.drawStr(64,24,humidity_buffer);
 
 	/*
 	  http.begin("http:///");
