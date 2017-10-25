@@ -45,7 +45,7 @@ static unsigned int const POWERSAVE_IN_MS = 120 * 1000; // 2 minutes
 static unsigned int pause_in_ms = PAUSE_ACTIVE_IN_MS;
 
 static const unsigned int NUM_WIFI_FRAMES = 5;
-static const uint8_t WIFI_FRAMES[NUM_WIFI_FRAMES][32] = {
+static const uint8_t WIFI_FRAMES[NUM_WIFI_FRAMES][32] PROGMEM= {
 	{
 	0x00, 0x00, 0x0A, 0x60, 0x04, 0x60, 0x0A, 0x60, 0x00, 0x6C, 0x04, 0x6C,
 	0x04, 0x60, 0x24, 0x64, 0x74, 0x6E, 0xE4, 0x67, 0xC4, 0x63, 0xC4, 0x63,
@@ -173,7 +173,7 @@ void display() {
 		displayData += (int)event.temperature;
 		displayData += "°C";
 	}
-	displayData += " ";
+	displayData += " - ";
 	dht.humidity().getEvent(&event);
 	if (isnan(event.relative_humidity)) {
 		DEBUG_PRINTLN("Error reading humidity!");
@@ -198,7 +198,7 @@ void display() {
 		wifiFrame = wifiConnection.getSignalStrength();
 	else
 		wifiFrame = wifiFrame + 1 % NUM_WIFI_FRAMES;
-	u8g2.drawXBM(SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 16, 16, WIFI_FRAMES[wifiFrame]);
+	u8g2.drawXBMP(SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 16, 16, WIFI_FRAMES[wifiFrame]);
 	u8g2.sendBuffer();
 
 }
