@@ -33,9 +33,15 @@ HTTPClient http;
 
 unsigned long lastButtonPressed = 0;
 bool displayOn = true;
-static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 120; //2 minutes
+#if FINAL
+static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 1200; //20 minutes
 static unsigned int const PAUSE_ACTIVE_IN_MS = 500; // half a sec
 static unsigned int const POWERSAVE_IN_MS = 20 * 1000; // 20 secs
+#else
+static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 360; //10 minutes
+static unsigned int const PAUSE_ACTIVE_IN_MS = 500; // half a sec
+static unsigned int const POWERSAVE_IN_MS = 120 * 1000; // 2 minutes
+#endif
 static unsigned int pause_in_ms = PAUSE_ACTIVE_IN_MS;
 
 static const unsigned int NUM_WIFI_FRAMES = 5;
@@ -149,7 +155,7 @@ void button_pressed() {
 	displayOn = true;
 	pause_in_ms = PAUSE_ACTIVE_IN_MS;
 	u8g2.display();
-	esp_schedule();
+	esp_schedule(); //we use a trick here to wakeup the main loop
 }
 
 void display() {
@@ -227,8 +233,7 @@ void loop() {
 	  http.end();
 	*/
 	lastButtonPressed += pause_in_ms; // a little false since we are doing other, stuff, but, meh
-	DEBUG_PRINTLN(lastButtonPressed);
-	if (lastButtonPressed > POWERSAVE_IN_MS)
+	if (lastButtonPressed >= POWERSAVE_IN_MS)
 	{
 		pause_in_ms = PAUSE_POWERSAVE_IN_MS;
 		displayOn = false;
