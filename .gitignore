@@ -338,3 +338,4 @@ __pycache__/
 # should be stored in the .pubxml.user file.
 
 # End of https://www.gitignore.io/api/c++,visualstudio,visualstudiocode
+wifi_creds.h
