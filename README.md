@@ -1,4 +1,4 @@
-Simple Temperaterature and Humidity Reporter
+Simple Temperature and Humidity Reporter
 ============================================
 
 This project combines several components in order to have an automatic reporting of temperature and humidity based on the (rather low-precision) DHT11.
