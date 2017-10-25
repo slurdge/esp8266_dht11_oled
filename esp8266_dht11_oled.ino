@@ -31,6 +31,13 @@ String postData = String("temperature=");
 
 HTTPClient http;
 
+unsigned long lastButtonPressed = 0;
+bool displayOn = true;
+static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 120; //2 minutes
+static unsigned int const PAUSE_ACTIVE_IN_MS = 500; // half a sec
+static unsigned int const POWERSAVE_IN_MS = 20 * 1000; // 20 secs
+static unsigned int pause_in_ms = PAUSE_ACTIVE_IN_MS;
+
 static const unsigned int NUM_WIFI_FRAMES = 5;
 static const uint8_t WIFI_FRAMES[NUM_WIFI_FRAMES][32] = {
 	{
@@ -81,9 +88,6 @@ public:
 		else
 		{
 			localIP = WiFi.localIP().toString();
-			long rssi = WiFi.RSSI();
-			Serial.print("RSSI:");
-			Serial.println(rssi);
 		}
 	}
 
@@ -135,13 +139,20 @@ void setup()
 	wifiConnection.checkWiFi();
 }
 
+extern "C" void esp_schedule();
+
+extern void delay_end(void* arg);
+
 void button_pressed() {
-	Serial.println("Button pressed!");
+	DEBUG_PRINTLN("Button pressed!");
+	lastButtonPressed = 0;
+	displayOn = true;
+	pause_in_ms = PAUSE_ACTIVE_IN_MS;
+	u8g2.display();
+	esp_schedule();
 }
 
-void loop() {
-	wifiConnection.checkWiFi();
-
+void display() {
 	String displayData;
 	sensors_event_t event;
 	dht.temperature().getEvent(&event);
@@ -184,6 +195,16 @@ void loop() {
 	u8g2.drawXBM(SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 16, 16, WIFI_FRAMES[wifiFrame]);
 	u8g2.sendBuffer();
 
+}
+
+void loop() {
+	wifiConnection.checkWiFi();
+
+	if (displayOn) {
+		display();
+	}
+
+
 	/*
 	  http.begin("http:///");
 
@@ -205,7 +226,16 @@ void loop() {
 
 	  http.end();
 	*/
-	delay(1000 * 1);
+	lastButtonPressed += pause_in_ms; // a little false since we are doing other, stuff, but, meh
+	DEBUG_PRINTLN(lastButtonPressed);
+	if (lastButtonPressed > POWERSAVE_IN_MS)
+	{
+		pause_in_ms = PAUSE_POWERSAVE_IN_MS;
+		displayOn = false;
+		u8g2.noDisplay();
+	}
+		
+	delay(pause_in_ms);
 }
 
 
