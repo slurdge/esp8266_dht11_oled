@@ -1,5 +1,9 @@
-#include <ESP8266HTTPClient.h>
+#include <time.h>
+
 #include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+//#include <ESP8266HTTPClient.h>
 
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
@@ -7,7 +11,7 @@
 
 #include <U8g2lib.h>
 
-#include "wifi_creds.h"
+#include "Secrets.h"
 
 #define FINAL 0
 
@@ -19,20 +23,11 @@
 #define DEBUG_PRINT(...) Serial.print(__VA_ARGS__)
 #endif
 
+// Various constants, change here accordingly with your schematics and usage
+
 static unsigned int const DHTPIN  = D5;    // Pin which is connected to the DHT sensor.
 static unsigned int const DHTTYPE = DHT11; // DHT 11
 
-DHT_Unified                            dht(DHTPIN, DHTTYPE);
-U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 32
-
-String postData = String("temperature=");
-
-HTTPClient http;
-
-unsigned long lastButtonPressed = 0;
-bool          displayOn         = true;
 #if FINAL
 static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 1200; // 20 minutes
 static unsigned int const PAUSE_ACTIVE_IN_MS    = 500;         // half a sec
@@ -42,7 +37,15 @@ static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 360; // 10 minutes
 static unsigned int const PAUSE_ACTIVE_IN_MS    = 500;        // half a sec
 static unsigned int const POWERSAVE_IN_MS       = 120 * 1000; // 2 minutes
 #endif
-static unsigned int pause_in_ms = PAUSE_ACTIVE_IN_MS;
+static unsigned int pauseInMs = PAUSE_ACTIVE_IN_MS;
+
+static unsigned int const CURRENT_TIME_ZONE_IN_S = 3600; // UTC+1
+
+static unsigned int const SCREEN_WIDTH  = 128;
+static unsigned int const SCREEN_HEIGHT = 32;
+
+extern const unsigned char LECertRoot[] PROGMEM;
+extern const unsigned int  LECertRootSize;
 
 static const unsigned int NUM_WIFI_FRAMES                          = 5;
 static const uint8_t      WIFI_FRAMES[NUM_WIFI_FRAMES][32] PROGMEM = {
@@ -118,65 +121,151 @@ class WiFiConnection
 };
 
 WiFiConnection wifiConnection;
+// HTTPClient http;
+WiFiClientSecure                       wifiClientSecure;
+DHT_Unified                            dht(DHTPIN, DHTTYPE);
+U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
+
+unsigned long   lastButtonPressed = 0;
+bool            displayOn         = true;
+sensors_event_t sensorTemperature = { 0 };
+sensors_event_t sensorHumidity = { 0 };
+String          postData          = String("temperature=");
+
+void synchronizeTime()
+{
+	// Synchronize time using SNTP. This is necessary to verify that
+	// the TLS certificates offered by the server are currently valid.
+	DEBUG_PRINTLN("Setting time using SNTP");
+	configTime(CURRENT_TIME_ZONE_IN_S, 0, "pool.ntp.org", "time.nist.gov");
+	time_t now = time(nullptr);
+	while (now < 1000)
+	{
+		delay(500);
+		DEBUG_PRINT(".");
+		now = time(nullptr);
+	}
+	DEBUG_PRINTLN("");
+	DEBUG_PRINT("Current time: ");
+	DEBUG_PRINTLN(ctime(&now));
+}
 
 void setup()
 {
 #if !FINAL
 	Serial.begin(115200);
 	Serial.println();
+	Serial.setDebugOutput(true);
 #endif
 
 	pinMode(D3, INPUT_PULLUP);
-	attachInterrupt(digitalPinToInterrupt(D3), button_pressed, FALLING);
+	attachInterrupt(digitalPinToInterrupt(D3), buttonPressed, FALLING);
 
 	dht.begin();
 	u8g2.begin();
 	wifiConnection.checkWiFi();
+	drawScreen();
+
+	synchronizeTime();
+	wifiClientSecure.setCACert_P(LECertRoot, LECertRootSize);
+
+	if (!wifiClientSecure.connect(API_HOSTNAME, 443))
+	{
+		DEBUG_PRINTLN("connection failed");
+		while (true)
+		{
+			delay(500);
+		}
+	}
+	// Verify validity of server's certificate
+	if (wifiClientSecure.verifyCertChain(API_HOSTNAME))
+	{
+		DEBUG_PRINTLN("Server certificate verified");
+	} else
+	{
+		DEBUG_PRINTLN("ERROR: certificate verification failed!");
+		while (true)
+		{
+			delay(500);
+		}
+	}
+
+	String url = "/";
+	Serial.print("requesting URL: ");
+	Serial.println(url);
+
+	wifiClientSecure.print(String("GET ") + url +
+	                       " HTTP/1.1\r\n"
+	                       "Host: " API_HOSTNAME "\r\n"
+	                       "User-Agent: ESP8266\r\n"
+	                       "Connection: close\r\n\r\n");
+
+	Serial.println("request sent");
+	while (wifiClientSecure.connected())
+	{
+		String line = wifiClientSecure.readStringUntil('\n');
+		Serial.println(line);
+		if (line == "\r")
+		{
+			Serial.println("headers received");
+			break;
+		}
+	}
+	Serial.println("reply was:");
+	Serial.println("==========");
+	while (wifiClientSecure.connected())
+	{
+		String line = wifiClientSecure.readStringUntil('\n');
+		Serial.println(line);
+	}
+	Serial.println("==========");
+	Serial.println();
 }
 
 extern "C" void esp_schedule();
 
-extern void delay_end(void* arg);
-
-void button_pressed()
+void buttonPressed()
 {
 	DEBUG_PRINTLN("Button pressed!");
 	lastButtonPressed = 0;
 	displayOn         = true;
-	pause_in_ms       = PAUSE_ACTIVE_IN_MS;
+	pauseInMs         = PAUSE_ACTIVE_IN_MS;
 	u8g2.display();
 	esp_schedule(); // we use a trick here to wakeup the main loop
 }
 
-void display()
+void getSensorData()
 {
-	String          displayData;
-	sensors_event_t event;
-	dht.temperature().getEvent(&event);
-	if (isnan(event.temperature))
+	dht.temperature().getEvent(&sensorTemperature);
+	dht.humidity().getEvent(&sensorHumidity);
+}
+
+void drawScreen()
+{
+	String displayData;
+	if (isnan(sensorTemperature.temperature))
 	{
 		DEBUG_PRINTLN("Error reading temperature!");
 		displayData += "NaN";
 	} else
 	{
 		DEBUG_PRINT("Temperature: ");
-		DEBUG_PRINT(event.temperature);
-		DEBUG_PRINTLN(" *C");
-		displayData += (int)event.temperature;
+		DEBUG_PRINT(sensorTemperature.temperature);
+		DEBUG_PRINTLN("°C");
+		displayData += (int)sensorTemperature.temperature;
 		displayData += "°C";
 	}
 	displayData += " - ";
-	dht.humidity().getEvent(&event);
-	if (isnan(event.relative_humidity))
+	if (isnan(sensorHumidity.relative_humidity))
 	{
 		DEBUG_PRINTLN("Error reading humidity!");
 		displayData += "NaN";
 	} else
 	{
 		DEBUG_PRINT("Humidity: ");
-		DEBUG_PRINT(event.relative_humidity);
+		DEBUG_PRINT(sensorHumidity.relative_humidity);
 		DEBUG_PRINTLN("%");
-		displayData += (int)event.relative_humidity;
+		displayData += (int)sensorHumidity.relative_humidity;
 		displayData += "%";
 	}
 
@@ -199,9 +288,10 @@ void loop()
 {
 	wifiConnection.checkWiFi();
 
+	getSensorData();
 	if (displayOn)
 	{
-		display();
+		drawScreen();
 	}
 
 	/*
@@ -225,13 +315,13 @@ void loop()
 
 	  http.end();
 	*/
-	lastButtonPressed += pause_in_ms; // a little false since we are doing other, stuff, but, meh
+	lastButtonPressed += pauseInMs; // a little false since we are doing other, stuff, but, meh
 	if (lastButtonPressed >= POWERSAVE_IN_MS)
 	{
-		pause_in_ms = PAUSE_POWERSAVE_IN_MS;
-		displayOn   = false;
+		pauseInMs = PAUSE_POWERSAVE_IN_MS;
+		displayOn = false;
 		u8g2.noDisplay();
 	}
 
-	delay(pause_in_ms);
+	delay(pauseInMs);
 }
