@@ -26,7 +26,7 @@ BraceWrapping:
   SplitEmptyFunction: true
   SplitEmptyRecord: false
   SplitEmptyNamespace: true
-ColumnLimit: 120
+ColumnLimit: 160
 ContinuationIndentWidth: 4
 Cpp11BracedListStyle: false
 IndentCaseLabels: true
