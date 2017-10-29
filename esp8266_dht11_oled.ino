@@ -13,7 +13,8 @@
 
 #include "Secrets.h"
 
-#define FINAL 0
+#define FINAL 0        // put to 1 for final build
+#define API_NO_HTTPS 1 // used for testing on local servers
 
 #if FINAL
 #define DEBUG_PRINTLN(...)
@@ -34,15 +35,20 @@ static unsigned int const PAUSE_ACTIVE_IN_MS    = 500;         // half a sec
 static unsigned int const POWERSAVE_IN_MS       = 20 * 1000;   // 20 secs
 #else
 static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 360; // 10 minutes
-static unsigned int const PAUSE_ACTIVE_IN_MS    = 500;        // half a sec
+static unsigned int const PAUSE_ACTIVE_IN_MS    = 2500;       // half a sec
 static unsigned int const POWERSAVE_IN_MS       = 120 * 1000; // 2 minutes
 #endif
-static unsigned int pauseInMs = PAUSE_ACTIVE_IN_MS;
+static unsigned int const UPLOAD_TIME_IN_MS  = 1000 * 3600 * 4; // 4 hours must be less than 50 days
+static unsigned int       pauseInMs          = PAUSE_ACTIVE_IN_MS;
+static unsigned int       lastUploadTimeInMs = 0;
+static unsigned int       lastMillis         = 0;
 
 static unsigned int const CURRENT_TIME_ZONE_IN_S = 3600; // UTC+1
 
 static unsigned int const SCREEN_WIDTH  = 128;
 static unsigned int const SCREEN_HEIGHT = 32;
+
+static unsigned int const NUM_LAST_SAMPLES = 5;
 
 extern const unsigned char LECertRoot[] PROGMEM;
 extern const unsigned int  LECertRootSize;
@@ -70,6 +76,13 @@ static const uint8_t      WIFI_FRAMES[NUM_WIFI_FRAMES][32] PROGMEM = {
         0x84, 0x6D, 0x84, 0x6D, 0xB4, 0x6D, 0xB4, 0x6D, 0xB4, 0x6D, 0xB4, 0x6D, 0xB4, 0x6D, 0x00, 0x00,
     }
 };
+
+static char const POST_HEADERS[] = "POST /data HTTP/1.1\r\n"
+                                   "Host: " API_HOSTNAME "\r\n"
+                                   "Content-Type: application/json\r\n"
+                                   "User-Agent: ESP8266\r\n"
+                                   "Accept-Encoding: identity;q=1\r\n"
+                                   "X-Auth-Token:" API_AUTH_TOKEN "\r\n";
 
 class WiFiConnection
 {
@@ -121,16 +134,19 @@ class WiFiConnection
 };
 
 WiFiConnection wifiConnection;
-// HTTPClient http;
-WiFiClientSecure                       wifiClientSecure;
+#if !defined(API_NO_HTTPS)
+WiFiClientSecure wifiClient;
+#else
+WiFiClient                wifiClient;
+#endif
 DHT_Unified                            dht(DHTPIN, DHTTYPE);
 U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
 
-unsigned long   lastButtonPressed = 0;
-bool            displayOn         = true;
-sensors_event_t sensorTemperature = { 0 };
-sensors_event_t sensorHumidity = { 0 };
-String          postData          = String("temperature=");
+unsigned long   lastButtonPressed                   = 0;
+bool            displayOn                           = true;
+sensors_event_t sensorTemperature[NUM_LAST_SAMPLES] = { 0 };
+sensors_event_t sensorHumidity[NUM_LAST_SAMPLES]    = { 0 };
+bool            postStatus                          = false;
 
 void synchronizeTime()
 {
@@ -167,59 +183,9 @@ void setup()
 	drawScreen();
 
 	synchronizeTime();
+#if !defined(API_NO_HTTPS)
 	wifiClientSecure.setCACert_P(LECertRoot, LECertRootSize);
-
-	if (!wifiClientSecure.connect(API_HOSTNAME, 443))
-	{
-		DEBUG_PRINTLN("connection failed");
-		while (true)
-		{
-			delay(500);
-		}
-	}
-	// Verify validity of server's certificate
-	if (wifiClientSecure.verifyCertChain(API_HOSTNAME))
-	{
-		DEBUG_PRINTLN("Server certificate verified");
-	} else
-	{
-		DEBUG_PRINTLN("ERROR: certificate verification failed!");
-		while (true)
-		{
-			delay(500);
-		}
-	}
-
-	String url = "/";
-	Serial.print("requesting URL: ");
-	Serial.println(url);
-
-	wifiClientSecure.print(String("GET ") + url +
-	                       " HTTP/1.1\r\n"
-	                       "Host: " API_HOSTNAME "\r\n"
-	                       "User-Agent: ESP8266\r\n"
-	                       "Connection: close\r\n\r\n");
-
-	Serial.println("request sent");
-	while (wifiClientSecure.connected())
-	{
-		String line = wifiClientSecure.readStringUntil('\n');
-		Serial.println(line);
-		if (line == "\r")
-		{
-			Serial.println("headers received");
-			break;
-		}
-	}
-	Serial.println("reply was:");
-	Serial.println("==========");
-	while (wifiClientSecure.connected())
-	{
-		String line = wifiClientSecure.readStringUntil('\n');
-		Serial.println(line);
-	}
-	Serial.println("==========");
-	Serial.println();
+#endif
 }
 
 extern "C" void esp_schedule();
@@ -238,6 +204,57 @@ void getSensorData()
 {
 	dht.temperature().getEvent(&sensorTemperature);
 	dht.humidity().getEvent(&sensorHumidity);
+}
+
+void postData()
+{
+	postStatus = false;
+
+	if (!wifiClient.connect(API_HOSTNAME, API_PORT))
+	{
+		DEBUG_PRINTLN("connection failed");
+		return;
+	}
+	// Verify validity of server's certificate
+#if !defined(API_NO_HTTPS)
+	bool verified = wifiClientSecure.verifyCertChain(API_HOSTNAME);
+	if (verified)
+	{
+		DEBUG_PRINTLN("Server certificate verified");
+	} else
+	{
+		DEBUG_PRINTLN("ERROR: certificate verification failed!");
+		return;
+	}
+#endif
+
+	// TODO: real average
+	float temperature_average = sensorTemperature.temperature;
+	float humidity_average    = sensorHumidity.relative_humidity;
+
+	String request = POST_HEADERS;
+	String body    = String("{\"temperature\":") + temperature_average + ",\"humidity\":" + humidity_average + "}\r\n";
+	request.concat(String("Content-Length: ") + body.length() + "\r\n");
+	request.concat("Connection: close\r\n\r\n");
+	request.concat(body);
+
+	DEBUG_PRINTLN(request);
+	wifiClient.write(request.c_str(), request.length());
+
+	DEBUG_PRINTLN("POST done");
+	while (wifiClient.connected())
+	{
+		String line = wifiClient.readStringUntil('\n');
+		DEBUG_PRINTLN(line);
+		if (line == "\r") break;
+	}
+	DEBUG_PRINTLN("Receiving");
+	if (wifiClient.connected())
+	{
+		String line = wifiClient.readStringUntil('\n');
+		DEBUG_PRINTLN(line);
+		if (line.startsWith("{\"success\":true}")) postStatus = true;
+	}
 }
 
 void drawScreen()
@@ -271,7 +288,6 @@ void drawScreen()
 
 	u8g2.clearBuffer();
 	u8g2.setFont(u8g2_font_5x7_tf);
-	unsigned int size = u8g2.getStrWidth(wifiConnection.getPublicIP().c_str());
 	u8g2.drawStr(0, SCREEN_HEIGHT, wifiConnection.getPublicIP().c_str());
 	u8g2.setFont(u8g2_font_9x15B_tf);
 	u8g2.drawUTF8(0, SCREEN_HEIGHT / 2, displayData.c_str());
@@ -293,28 +309,8 @@ void loop()
 	{
 		drawScreen();
 	}
+	postData();
 
-	/*
-	  http.begin("http:///");
-
-	  String fullpostData=postData+sensor_buffer;
-	  Serial.println(fullpostData);
-	  http.addHeader("Content-Type","application/x-www-form-urlencoded");
-	  int httpCode = http.POST(fullpostData);
-	  if(httpCode == HTTP_CODE_OK)
-	  {
-	    Serial.print("HTTP response code ");
-	    Serial.println(httpCode);
-	    String response = http.getString();
-	    Serial.println(response);
-	  }
-	  else
-	  {
-	     Serial.println("Error in HTTP request");
-	  }
-
-	  http.end();
-	*/
 	lastButtonPressed += pauseInMs; // a little false since we are doing other, stuff, but, meh
 	if (lastButtonPressed >= POWERSAVE_IN_MS)
 	{
