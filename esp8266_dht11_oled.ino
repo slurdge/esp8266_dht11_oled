@@ -75,7 +75,16 @@ static const uint8_t      WIFI_FRAMES[NUM_WIFI_FRAMES][32] PROGMEM = {
     }
 };
 
-static char const POST_HEADERS[] = "POST /data HTTP/1.1\r\n"
+static const uint8_t UPLOAD_FRAMES[2][32] PROGMEM = { {
+	                                                      0x00, 0x00, 0xFC, 0x3F, 0x02, 0x40, 0x32, 0x52, 0x4A, 0x4A, 0x4A, 0x46, 0x4A, 0x4A, 0x32, 0x52,
+	                                                      0x02, 0x40, 0xFC, 0x3F, 0x02, 0x40, 0x56, 0xD5, 0xAB, 0xAA, 0x55, 0xD5, 0xAB, 0xAA, 0xFF, 0xFF,
+	                                                  },
+	                                                  {
+	                                                      0x00, 0x00, 0xFC, 0x3F, 0x02, 0x40, 0x4A, 0x4C, 0x5A, 0x52, 0x5A, 0x52, 0x6A, 0x52, 0x4A, 0x4C,
+	                                                      0x02, 0x40, 0xFC, 0x3F, 0x02, 0x40, 0x56, 0x55, 0xAB, 0xAA, 0x55, 0xD5, 0xAB, 0xAA, 0xFF, 0xFF,
+	                                                  } };
+
+static char const POST_HEADERS[] = "POST " API_ENDPOINT " HTTP/1.1\r\n"
                                    "Host: " API_HOSTNAME "\r\n"
                                    "Content-Type: application/json\r\n"
                                    "User-Agent: ESP8266\r\n"
@@ -132,7 +141,7 @@ class WiFiConnection
 };
 
 WiFiConnection wifiConnection;
-#if !defined(API_NO_HTTPS)
+#if !(API_NO_HTTPS)
 WiFiClientSecure wifiClient;
 #else
 WiFiClient                wifiClient;
@@ -140,11 +149,13 @@ WiFiClient                wifiClient;
 DHT_Unified                            dht(DHTPIN, DHTTYPE);
 U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
 
-unsigned long   lastButtonPressed                   = 0;
-bool            displayOn                           = true;
-sensors_event_t sensorTemperature[NUM_LAST_SAMPLES] = { 0 };
-sensors_event_t sensorHumidity[NUM_LAST_SAMPLES]    = { 0 };
-bool            postStatus                          = false;
+unsigned long lastButtonPressed                   = 0;
+bool          displayOn                           = true;
+float         sensorTemperature[NUM_LAST_SAMPLES] = { 0 };
+float         sensorHumidity[NUM_LAST_SAMPLES]    = { 0 };
+unsigned int  sampleIndex                         = 0;
+bool          lastCollectionOk                    = false;
+bool          lastPostOk                          = false;
 
 void synchronizeTime()
 {
@@ -181,9 +192,11 @@ void setup()
 	drawScreen();
 
 	synchronizeTime();
-#if !defined(API_NO_HTTPS)
-	wifiClientSecure.setCACert_P(LECertRoot, LECertRootSize);
+#if !(API_NO_HTTPS)
+	wifiClient.setCACert_P(LECertRoot, LECertRootSize);
 #endif
+
+	lastMillis = millis();
 }
 
 extern "C" void esp_schedule();
@@ -200,13 +213,31 @@ void buttonPressed()
 
 void getSensorData()
 {
-	dht.temperature().getEvent(&sensorTemperature);
-	dht.humidity().getEvent(&sensorHumidity);
+	sensors_event_t localTemperature;
+	sensors_event_t localHumidity;
+	dht.temperature().getEvent(&localTemperature);
+	dht.humidity().getEvent(&localHumidity);
+	if (isnan(localTemperature.temperature) || isnan(localHumidity.relative_humidity))
+	{
+		DEBUG_PRINTLN("Error reading temperature or humidity!");
+		lastCollectionOk = false;
+	} else
+	{
+		DEBUG_PRINT("Temperature: ");
+		DEBUG_PRINT(localTemperature.temperature);
+		DEBUG_PRINT("°C , Humidity: ");
+		DEBUG_PRINT(localHumidity.relative_humidity);
+		DEBUG_PRINTLN("%");
+		sensorTemperature[sampleIndex] = localTemperature.temperature;
+		sensorHumidity[sampleIndex]    = localHumidity.relative_humidity;
+		sampleIndex                    = (sampleIndex + 1) % NUM_LAST_SAMPLES;
+		lastCollectionOk               = true;
+	}
 }
 
 void postData()
 {
-	postStatus = false;
+	lastPostOk = false;
 
 	if (!wifiClient.connect(API_HOSTNAME, API_PORT))
 	{
@@ -214,8 +245,8 @@ void postData()
 		return;
 	}
 	// Verify validity of server's certificate
-#if !defined(API_NO_HTTPS)
-	bool verified = wifiClientSecure.verifyCertChain(API_HOSTNAME);
+#if !(API_NO_HTTPS)
+	bool verified = wifiClient.verifyCertChain(API_HOSTNAME);
 	if (verified)
 	{
 		DEBUG_PRINTLN("Server certificate verified");
@@ -226,9 +257,15 @@ void postData()
 	}
 #endif
 
-	// TODO: real average
-	float temperature_average = sensorTemperature.temperature;
-	float humidity_average    = sensorHumidity.relative_humidity;
+	float temperature_average = 0;
+	float humidity_average    = 0;
+	for (unsigned int i = 0; i < NUM_LAST_SAMPLES; ++i)
+	{
+		temperature_average += sensorTemperature[i];
+		humidity_average += sensorHumidity[i];
+	}
+	temperature_average /= (float)NUM_LAST_SAMPLES;
+	humidity_average /= (float)NUM_LAST_SAMPLES;
 
 	String request = POST_HEADERS;
 	String body    = String("{\"temperature\":") + temperature_average + ",\"humidity\":" + humidity_average + "}\r\n";
@@ -237,7 +274,7 @@ void postData()
 	request.concat(body);
 
 	DEBUG_PRINTLN(request);
-	wifiClient.write(request.c_str(), request.length());
+	wifiClient.write((const unsigned char*)(request.c_str()), request.length());
 
 	DEBUG_PRINTLN("POST done");
 	while (wifiClient.connected())
@@ -251,36 +288,23 @@ void postData()
 	{
 		String line = wifiClient.readStringUntil('\n');
 		DEBUG_PRINTLN(line);
-		if (line.startsWith("{\"success\":true}")) postStatus = true;
+		if (line.startsWith("{\"success\":true")) lastPostOk = true;
 	}
+	lastUploadTimeInMs = 0;
 }
 
 void drawScreen()
 {
-	String displayData;
-	if (isnan(sensorTemperature.temperature))
+	String       displayData;
+	unsigned int lastSampleIndex = (sampleIndex + NUM_LAST_SAMPLES - 1) % NUM_LAST_SAMPLES;
+	if (!lastCollectionOk)
 	{
-		DEBUG_PRINTLN("Error reading temperature!");
-		displayData += "NaN";
+		displayData = "Err. - Err.";
 	} else
 	{
-		DEBUG_PRINT("Temperature: ");
-		DEBUG_PRINT(sensorTemperature.temperature);
-		DEBUG_PRINTLN("°C");
-		displayData += (int)sensorTemperature.temperature;
-		displayData += "°C";
-	}
-	displayData += " - ";
-	if (isnan(sensorHumidity.relative_humidity))
-	{
-		DEBUG_PRINTLN("Error reading humidity!");
-		displayData += "NaN";
-	} else
-	{
-		DEBUG_PRINT("Humidity: ");
-		DEBUG_PRINT(sensorHumidity.relative_humidity);
-		DEBUG_PRINTLN("%");
-		displayData += (int)sensorHumidity.relative_humidity;
+		displayData += (int)sensorTemperature[lastSampleIndex];
+		displayData += "°C - ";
+		displayData += (int)sensorHumidity[lastSampleIndex];
 		displayData += "%";
 	}
 
@@ -288,18 +312,23 @@ void drawScreen()
 	u8g2.setFont(u8g2_font_5x7_tf);
 	u8g2.drawStr(0, SCREEN_HEIGHT, wifiConnection.getPublicIP().c_str());
 	u8g2.setFont(u8g2_font_9x15B_tf);
-	u8g2.drawUTF8(0, SCREEN_HEIGHT / 2, displayData.c_str());
+	u8g2.drawUTF8(0, SCREEN_HEIGHT / 2 - 2, displayData.c_str());
 	static unsigned int wifiFrame = 0;
 	if (wifiConnection.isConnected())
 		wifiFrame = wifiConnection.getSignalStrength();
 	else
 		wifiFrame = wifiFrame + 1 % NUM_WIFI_FRAMES;
 	u8g2.drawXBMP(SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 16, 16, WIFI_FRAMES[wifiFrame]);
+	u8g2.drawXBMP(SCREEN_WIDTH - 16, 0, 16, 16, UPLOAD_FRAMES[lastPostOk ? 0 : 1]);
+
+
 	u8g2.sendBuffer();
 }
 
 void loop()
 {
+	lastUploadTimeInMs += millis() - lastMillis;
+	lastMillis = millis();
 	wifiConnection.checkWiFi();
 
 	getSensorData();
@@ -307,7 +336,10 @@ void loop()
 	{
 		drawScreen();
 	}
-	postData();
+	if (lastUploadTimeInMs > UPLOAD_TIME_IN_MS)
+	{
+		postData();
+	}
 
 	lastButtonPressed += pauseInMs; // a little false since we are doing other, stuff, but, meh
 	if (lastButtonPressed >= POWERSAVE_IN_MS)
