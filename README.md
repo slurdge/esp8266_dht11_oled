@@ -33,9 +33,9 @@ The current solution is based on:
 
 For the embedded part, you need [Arduino](https://www.arduino.cc/) with the following:
 
- * Git version of [ESP8266 core](https://github.com/esp8266/Arduino)
- * DHT sensor library
- * U8G2 display library
+ * Git version of [ESP8266 core](https://github.com/esp8266/Arduino) - Latest version is needed for HTTPS support.
+ * DHT sensor library.
+ * U8G2 display library.
 
 ## Compiling
 
