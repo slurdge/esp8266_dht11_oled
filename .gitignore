@@ -341,3 +341,7 @@ __pycache__/
 Secrets.h
 web/data/secrets.php
 __vm/
+web/data/temperature.dat
+esp8266_dht11_oled.sln
+esp8266_dht11_oled.vcxproj
+esp8266_dht11_oled.vcxproj.filters
