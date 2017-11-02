@@ -321,6 +321,21 @@ void drawScreen()
 	u8g2.drawXBMP(SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 16, 16, WIFI_FRAMES[wifiFrame]);
 	u8g2.drawXBMP(SCREEN_WIDTH - 16, 0, 16, 16, UPLOAD_FRAMES[lastPostOk ? 0 : 1]);
 
+//#define EXPORT_BACK_BUFFER
+#if defined(EXPORT_BACK_BUFFER)
+	uint8_t*     backBuffer = u8g2.getBufferPtr();
+	unsigned int totalTiles = u8g2.getBufferTileHeight() * u8g2.getBufferTileWidth() / 2;
+	Serial.println(u8g2.getBufferTileWidth());
+	Serial.println(u8g2.getBufferTileHeight());
+	Serial.println(totalTiles);
+	Serial.println("-----------------");
+	for (unsigned int i = 0; i < totalTiles * 8; ++i)
+	{
+		uint8_t data = backBuffer[i];
+		Serial.printf("%02x", data);
+	}
+	Serial.println("\n-----------------");
+#endif
 
 	u8g2.sendBuffer();
 }
