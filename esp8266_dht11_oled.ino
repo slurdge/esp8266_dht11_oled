@@ -3,7 +3,6 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
-//#include <ESP8266HTTPClient.h>
 
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
@@ -14,7 +13,7 @@
 #include "Secrets.h"
 
 #define FINAL 0        // put to 1 for final build
-#define API_NO_HTTPS 1 // used for testing on local servers
+#define API_NO_HTTPS 0 // used for testing on local servers
 
 #if FINAL
 #define DEBUG_PRINTLN(...)
@@ -30,25 +29,24 @@ static unsigned int const DHTPIN  = D5;    // Pin which is connected to the DHT 
 static unsigned int const DHTTYPE = DHT11; // DHT 11
 
 #if FINAL
-static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 1200; // 20 minutes
-static unsigned int const PAUSE_ACTIVE_IN_MS    = 500;         // half a sec
-static unsigned int const POWERSAVE_IN_MS       = 20 * 1000;   // 20 secs
+static unsigned int const PAUSE_POWERSAVE_IN_MS = 1200 * 1000; // 20 minutes
+static unsigned int const PAUSE_ACTIVE_IN_MS    = 1000;        // 1 sec
+static unsigned int const POWERSAVE_IN_MS       = 40 * 1000;   // 40 secs
 #else
-static unsigned int const PAUSE_POWERSAVE_IN_MS = 1000 * 360; // 10 minutes
-static unsigned int const PAUSE_ACTIVE_IN_MS    = 2500;       // half a sec
+static unsigned int const PAUSE_POWERSAVE_IN_MS = 600 * 1000; // 10 minutes
+static unsigned int const PAUSE_ACTIVE_IN_MS    = 1000;       // 1 sec
 static unsigned int const POWERSAVE_IN_MS       = 120 * 1000; // 2 minutes
 #endif
-static unsigned int const UPLOAD_TIME_IN_MS  = 1000 * 3600 * 4; // 4 hours must be less than 50 days
+static unsigned int const UPLOAD_TIME_IN_MS  = 3600 * 1000 * 2; // 2 hours - must be less than 50 days
 static unsigned int       pauseInMs          = PAUSE_ACTIVE_IN_MS;
 static unsigned int       lastUploadTimeInMs = 0;
 static unsigned int       lastMillis         = 0;
+static unsigned int const NUM_LAST_SAMPLES   = 8; // You should respect this: UPLOAD_TIME_IN_MS > NUM_LAST_SAMPLES * POWERSAVE_IN_MS
 
 static unsigned int const CURRENT_TIME_ZONE_IN_S = 3600; // UTC+1
 
 static unsigned int const SCREEN_WIDTH  = 128;
 static unsigned int const SCREEN_HEIGHT = 32;
-
-static unsigned int const NUM_LAST_SAMPLES = 5;
 
 extern const unsigned char LECertRoot[] PROGMEM;
 extern const unsigned int  LECertRootSize;
