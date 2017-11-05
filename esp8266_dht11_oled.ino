@@ -12,7 +12,7 @@
 
 #include "Secrets.h"
 
-#define FINAL 0        // put to 1 for final build
+#define FINAL 1        // put to 1 for final build
 #define API_NO_HTTPS 0 // used for testing on local servers
 
 #if FINAL
@@ -284,7 +284,11 @@ void postData()
 		if (line == "\r") break;
 	}
 	DEBUG_PRINTLN("Receiving");
+#if FINAL
 	if (wifiClient.connected())
+#else
+    while (wifiClient.connected())
+#endif
 	{
 		String line = wifiClient.readStringUntil('\n');
 		DEBUG_PRINTLN(line);
@@ -320,7 +324,6 @@ void drawScreen()
 		wifiFrame = wifiFrame + 1 % NUM_WIFI_FRAMES;
 	u8g2.drawXBMP(SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 16, 16, WIFI_FRAMES[wifiFrame]);
 	u8g2.drawXBMP(SCREEN_WIDTH - 16, 0, 16, 16, UPLOAD_FRAMES[lastPostOk ? 0 : 1]);
-
 
 	u8g2.sendBuffer();
 }
