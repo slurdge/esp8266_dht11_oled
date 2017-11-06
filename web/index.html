@@ -8,97 +8,24 @@
   <meta name="description" content="">
   <meta name="author" content="">
   <title>Chart</title>
-  <link href="vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.0.0-beta/css/bootstrap.css"/>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.0/Chart.bundle.min.js"></script>
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/css/bootstrap.min.css"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.19.1/moment.min.js"></script>
   <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
   <script src="data/"></script>
 </head>
 <body class="fixed-nav sticky-footer bg-dark" id="page-top">
-  <!-- Navigation-->
-  <div class="content-wrapper">
-    <div class="container-fluid">
-      <div class="card mb-3">
+  <div class="content-wrapper h-100">
+    <div class="container h-100">
+      <header class="masthead"><div class="inner"><h3 style="color: #fff;">Charts</h3></div></header>
+      <div class="card mb-3 h-100">
         <div class="card-header">
-          <i class="fa fa-area-chart"></i> Area Chart Example</div>
+          <i class="fa fa-area-chart"></i>Temperature and Humidity over time</div>
         <div class="card-body">
-          <canvas id="chart-0" width="100%" height="30"></canvas>
+          <div id="chart-plotly" width="100%" height="100%"></div>
         </div>
-        <div class="card-footer small text-muted">Updated yesterday at 11:59 PM</div>
-      </div>
-      <div class="card mb-3">
-        <div class="card-header">
-          <i class="fa fa-area-chart"></i> Area Chart Example</div>
-        <div class="card-body">
-          <div id="chart-1" width="100%" height="250px"></div>
-        </div>
-        <div class="card-footer small text-muted">Updated yesterday at 11:59 PM</div>
+        <div class="card-footer small text-muted"></div>
       </div>
     </div>
-<script language="javascript">
-  const data_sorted = data.sort(function(a, b) {
-    return a[0] - b[0];
-});
-	labels=[];
-	temperature=[];
-	humidity=[];
-	for (var i = data_sorted.length - 1; i >= 0; i--) {
-		labels[i] = moment(data_sorted[i][0], 'X').utc().format();
-		temperature[i] = data_sorted[i][1];
-		humidity[i] = data_sorted[i][2];
-	}
-	var ctx = document.getElementById("chart-0").getContext('2d');
-	var chart = new Chart(ctx, {
-			type: 'line',
-			data: {  labels:labels,
-				datasets: [
-					{data:temperature, label:"Temperature", "borderColor":"rgb(75, 192, 192)"},
-					{data:humidity, label:"Humidity","borderColor":"rgb(192, 192, 75)"}]
-				},
-			options:
-			{
-				responsive: true,
-				title:{
-					display:true,
-					text:"Chart.js Time Point Data"
-				},
-			},
-			options: {
-        scales: {
-            xAxes: [{
-                type: 'time',
-                time: { unit: 'day'}
-            }],
-            yAxes: [{
-                ticks: {
-                    beginAtZero:true
-                }
-            }]
-        }
-    }
-	});
-
-var trace1 = {
-  type: "scatter",
-  mode: "lines",
-  name: 'Temperature',
-  x: labels,
-  y: temperature,
-  line: {color: '#17BECF'}
-}
-
-var trace2 = {
-  type: "scatter",
-  mode: "lines",
-  name: 'Humidity',
-  x: labels,
-  y: humidity,
-  line: {color: '#7F7F7F'}
-}
-
-  Plotly.plot( 'chart-1', [trace1,trace2], {
-  margin: { t: 0 } } );
-</script>
+	<script src="js/plot.js"></script>
 </body>
 </html>
